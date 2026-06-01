@@ -1,0 +1,191 @@
+//Full Arduino Code
+// --------------------- PIN SETUP ---------------------
+#define BUTTON_PIN 2
+#define TRIG_PIN 4
+#define ECHO_PIN 5
+#define BUZZER_PIN 8
+#define LDR_PIN A0
+
+// RGB LED (Common Cathode)
+#define LED_R 6
+#define LED_G 9
+#define LED_B 10
+
+#include <SoftwareSerial.h>
+
+// --------------------- GAME SETTINGS ---------------------
+int points = 0;
+const byte PLAYER_ID = 1;   // <<< CHANGE TO 2 ON TRANSMITTER #2
+int ldrBaseline = 0;
+int ldrTrigger = 0;
+
+long timeoutLimit = 5000;  // 5 seconds reaction window
+
+// XBee
+SoftwareSerial xbee(11, 12);   // RX , TX
+
+// --------------------- PACKET ---------------------
+byte makePacket(byte eventCode) {
+  return (PLAYER_ID << 4) | (eventCode & 0x0F);
+}
+
+// --------------------- HELPERS ---------------------
+void buzzerOn() { digitalWrite(BUZZER_PIN, LOW); }
+void buzzerOff() { digitalWrite(BUZZER_PIN, HIGH); }
+
+void rgb(int r, int g, int b) {
+  analogWrite(LED_R, r);
+  analogWrite(LED_G, g);
+  analogWrite(LED_B, b);
+}
+
+void rgbOff() {
+  analogWrite(LED_R, 0);
+  analogWrite(LED_G, 0);
+  analogWrite(LED_B, 0);
+}
+
+long getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 20000);
+  long distance = duration * 0.034 / 2;
+  return distance;
+}
+
+// --------------------- SENSOR WAITERS ---------------------
+bool waitForButton() {
+  long start = millis();
+  while (millis() - start < timeoutLimit) {
+    if (digitalRead(BUTTON_PIN) == LOW) return true;
+  }
+  return false;
+}
+
+bool waitForUltrasonic() {
+  long start = millis();
+  while (millis() - start < timeoutLimit) {
+    if (getDistance() > 0 && getDistance() < 10) return true;
+  }
+  return false;
+}
+
+bool waitForLDR() {
+  long start = millis();
+  while (millis() - start < timeoutLimit) {
+    if (analogRead(LDR_PIN) < ldrTrigger) return true;
+  }
+  return false;
+}
+
+// --------------------- SEND PACKET ---------------------
+void sendEvent(byte eventCode) {
+  byte pkt = makePacket(eventCode);
+
+  Serial.print("Sending packet: ");
+  Serial.println(pkt);
+
+  // --- CHANGED FOR JAVA COMPATIBILITY ---
+  // Using println sends the number as text ("17") followed by a Newline.
+  // This allows Java's port.readLine() to catch it and Integer.parseInt() to read it.
+  xbee.println(pkt); 
+}
+
+// --------------------- GAME ROUND ---------------------
+void playRound() {
+  Serial.println("\n--- New Round ---");
+
+  int eventType = random(1, 4);
+  delay(random(1500, 4000)); // Random delay
+
+  // BUTTON
+  if (eventType == 1) {
+    Serial.println("EVENT: BUTTON");
+    rgb(0, 255, 0);
+    bool success = waitForButton();
+    rgbOff();
+
+    if (success) {
+      sendEvent(1);
+      Serial.println("Button success!");
+      points++;
+    } else {
+      Serial.println("FAILED: too slow");
+    }
+  }
+
+  // ULTRASONIC
+  else if (eventType == 2) {
+    Serial.println("EVENT: ULTRASONIC");
+    buzzerOn(); delay(200); buzzerOff();
+
+    bool success = waitForUltrasonic();
+
+    if (success) {
+      sendEvent(2);
+      Serial.println("Ultrasonic success!");
+      points++;
+    } else {
+      Serial.println("FAILED ultrasonic");
+    }
+  }
+
+  // LDR
+  else {
+    Serial.println("EVENT: LDR");
+    rgb(0, 0, 255);
+    buzzerOn(); delay(150); buzzerOff();
+
+    bool success = waitForLDR();
+    rgbOff();
+
+    if (success) {
+      sendEvent(3);
+      Serial.println("LDR success!");
+      points++;
+    } else {
+      Serial.println("FAILED LDR");
+    }
+  }
+
+  Serial.print("POINTS = ");
+  Serial.println(points);
+}
+
+// --------------------- SETUP ---------------------
+void setup() {
+  Serial.begin(9600);
+  xbee.begin(9600);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  buzzerOff();
+
+  pinMode(LED_R, OUTPUT);
+  pinMode(LED_G, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+  rgbOff();
+
+  // Calibrate LDR
+  long sum = 0;
+  for (int i = 0; i < 20; i++) {
+    sum += analogRead(LDR_PIN);
+    delay(30);
+  }
+  ldrBaseline = sum / 20;
+  ldrTrigger = ldrBaseline - 50;
+
+  Serial.println("Reaction Rush START!");
+}
+
+// --------------------- LOOP ---------------------
+void loop() {
+  playRound();
+  delay(1000);
+}
